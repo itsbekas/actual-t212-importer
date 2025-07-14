@@ -10,40 +10,60 @@ export class Trading212Client {
         });
     }
 
-    setToken(token) {
-        this.t212Client.defaults.headers.common['Authorization'] = token;
-    }
-
     async getAccountMetadata() {
         const response = await this.t212Client.get('/equity/account/info');
         return response.data;
     }
 
     async getExports() {
-        const response = await this.t212Client.get('/equity/export');
+        const response = await this.t212Client.get('/history/exports')
+            .catch(async error => {
+                if (error.response && error.response.status === 429) {
+                    console.warn("Rate limit exceeded. Retrying after 60 seconds...");
+                    await new Promise(resolve => setTimeout(resolve, 60000));
+                    return await this.t212Client.get('/history/exports');
+                } else {
+                    throw error;
+                }
+            });
         return response.data;
     }
 
     async exportCSV(
         fromDate,
         toDate = new Date(),
-        includeDividends = false,
-        includeInterest = false,
-        includeOrders = false,
-        includeTransactions = false,
+        includeDividends = true,
+        includeInterest = true,
+        includeOrders = true,
+        includeTransactions = true,
     ) {
+        const formatDate = (date) => {
+            return date.toISOString().slice(0, 19) + 'Z';
+        };
         const params = {
-            fromDate: fromDate.toISOString(),
-            toDate: toDate.toISOString(),
+            timeFrom: formatDate(fromDate),
+            timeTo: formatDate(toDate),
+            dataIncluded: {
             includeDividends,
             includeInterest,
             includeOrders,
             includeTransactions
+            }
         };
-        const response = await this.t212Client.post('/history/exports', params);
-        if (response.status !== 200) {
-            throw new Error(`Failed to export CSV: ${response.statusText}`);
-        }
+
+        let response = await this.t212Client.post(
+            '/history/exports',
+            params,
+            { headers: { 'Content-Type': 'application/json' } }
+        ).catch(async error => {
+                if (error.response && error.response.status === 429) {
+                    console.warn("Rate limit exceeded. Retrying after 30 seconds...");
+                    await new Promise(resolve => setTimeout(resolve, 30000));
+                    return this.t212Client.post('/history/exports', null, { params });
+                } else {
+                    throw error;
+                }
+            });
         return response.data;
     }
 }
