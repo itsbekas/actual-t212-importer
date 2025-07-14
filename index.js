@@ -1,11 +1,7 @@
-
-import axios from "axios";
 import actualClient from '@actual-app/api';
 import { getConfig } from './config.js';
+import { Trading212Client } from './t212.js';
 
-const t212Client = axios.create({
-    baseURL: "https://live.trading212.com/api/v0",
-});
 
 async function initialize() {
     const config = getConfig();
@@ -14,6 +10,8 @@ async function initialize() {
         console.error("Configuration is not available. Please run the setup.");
         return;
     }
+
+    const t212Client = new Trading212Client(config.t212Token);
 
     actualClient.init({
         dataDir: config.dataDir,

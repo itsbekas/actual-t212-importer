@@ -1,20 +1,22 @@
 import { createInterface } from "readline";
 import fs from "fs";
+import { Trading212Client } from "./t212.js";
 
 async function tokenIsValid(token) {
     if (!token || token.length === 0) {
         console.error("Trading212 API token cannot be empty.");
         return false;
     }
+    
+    const t212Client = new Trading212Client(token);
+    try {
+        await t212Client.getAccountMetadata();
+    } catch (error) {
+        console.error("Invalid Trading212 API token:", error.message);
+        return false;
+    }
 
-    const t212Client = axios.create({
-        baseURL: "https://live.trading212.com/api/v0",
-    });
-
-    t212Client.defaults.headers.common['Authorization'] = token;
-    return await t212Client.get('/equity/account/info')
-        .then(() => true)
-        .catch(() => false);
+    return true;
 }
 
 function loadConfig() {
@@ -68,3 +70,4 @@ async function promptConfig() {
 export async function getConfig() {
     return configExists() ? loadConfig() : await promptConfig();
 }
+
