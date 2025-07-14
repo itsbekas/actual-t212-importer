@@ -34,7 +34,7 @@ function configExists() {
     return fs.existsSync('config.json');
 }
 
-function saveConfig() {
+function saveConfig(config) {
     try {
         const data = JSON.stringify(config, null, 2);
         fs.writeFileSync('config.json', data, 'utf8');
@@ -52,6 +52,8 @@ async function promptConfig() {
 
     const ask = (q) => new Promise(resolve => rl.question(q, resolve));
 
+    const config = {};
+
     config.dataDir = await ask('Enter data directory: ');
     config.serverURL = await ask('Enter server URL: ');
     config.password = await ask('Enter password: ');
@@ -63,7 +65,7 @@ async function promptConfig() {
     }
     rl.close();
 
-    saveConfig();
+    saveConfig(config);
     return config;
 }
 
