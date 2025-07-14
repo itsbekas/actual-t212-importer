@@ -81,7 +81,11 @@ async function promptConfig() {
 async function initialize() {
     const config = configExists() ? loadConfig() : await promptConfig();
 
-    // TODO: Initialize Actual client with the loaded config
+    actualClient.setConfig({
+        dataDir: config.dataDir,
+        serverURL: config.serverURL,
+        password: config.password
+    });
 }
 
 await initialize();
