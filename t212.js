@@ -16,17 +16,17 @@ export class Trading212Client {
     }
 
     async getExports() {
-        const response = await this.t212Client.get('/history/exports')
+        return await this.t212Client.get('/history/exports')
+            .then(response => response.data)
             .catch(async error => {
                 if (error.response && error.response.status === 429) {
                     console.warn("Rate limit exceeded. Retrying after 60 seconds...");
                     await new Promise(resolve => setTimeout(resolve, 60000));
-                    return await this.t212Client.get('/history/exports');
+                    return this.t212Client.get('/history/exports');
                 } else {
                     throw error;
                 }
             });
-        return response.data;
     }
 
     async exportCSV(
@@ -51,11 +51,13 @@ export class Trading212Client {
             }
         };
 
-        let response = await this.t212Client.post(
-            '/history/exports',
-            params,
-            { headers: { 'Content-Type': 'application/json' } }
-        ).catch(async error => {
+        return await this.t212Client.post(
+                '/history/exports',
+                params,
+                { headers: { 'Content-Type': 'application/json' } }
+        )
+            .then(response => response.data)
+            .catch(async error => {
                 if (error.response && error.response.status === 429) {
                     console.warn("Rate limit exceeded. Retrying after 30 seconds...");
                     await new Promise(resolve => setTimeout(resolve, 30000));
@@ -64,6 +66,5 @@ export class Trading212Client {
                     throw error;
                 }
             });
-        return response.data;
     }
 }

@@ -1,5 +1,6 @@
 import { createInterface } from "readline";
 import fs from "fs";
+import actualClient from '@actual-app/api';
 import { Trading212Client } from "./t212.js";
 
 async function tokenIsValid(token) {
@@ -55,8 +56,45 @@ async function promptConfig() {
     const config = {};
 
     config.dataDir = await ask('Enter data directory: ');
+    if (!fs.existsSync(config.dataDir)) {
+        const createDir = await ask(`Directory "${config.dataDir}" does not exist. Create it? (y/n): `);
+        if (createDir.trim().toLowerCase() === 'y') {
+            fs.mkdirSync(config.dataDir, { recursive: true });
+            console.log(`Directory "${config.dataDir}" created.`);
+        } else {
+            console.error("Cannot continue without a valid data directory.");
+            rl.close();
+            process.exit(1);
+        }
+    }
     config.serverURL = await ask('Enter server URL: ');
     config.password = await ask('Enter password: ');
+    config.budgetID = await ask('Enter budget ID: ');
+
+    await actualClient.init({
+        dataDir: config.dataDir,
+        serverURL: config.serverURL,
+        password: config.password
+    });
+
+    await actualClient.downloadBudget(config.budgetID);
+
+    const accounts = await actualClient.getAccounts();
+
+    console.log(accounts);
+
+    console.log(`Found ${accounts.length} accounts. Please select the account for Trading212 exports:`);
+    accounts.forEach((account, index) => {
+        console.log(`${index + 1}: ${account.name} (${account.id})`);
+    });
+
+    const accountIndex = await ask('Enter the number of the account: ');
+    const selectedAccount = accounts[Number(accountIndex) - 1];
+
+    config.accountId = selectedAccount.id;
+
+    console.log(`Selected account: ${selectedAccount.name} (${selectedAccount.id})`);
+
     config.token = await ask('Enter Trading212 API token: ');
 
     while (!(await tokenIsValid(config.token))) {
