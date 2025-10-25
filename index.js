@@ -172,6 +172,7 @@ async function initialize() {
 
     await actualClient.downloadBudget(config.budgetId);
 
+    const currentSync = dayjs();
     let transactions;
     if (config.lastSync === null) {
         // First sync: download full history in 360-day chunks
@@ -186,6 +187,10 @@ async function initialize() {
     console.log(`Ready to import ${transactions.length} transactions for account: ${config.accountId}`);
     await actualClient.importTransactions(config.accountId, transactions);
     console.log("Transactions imported successfully.");
+
+    // Update lastSync timestamp in config
+    config.lastSync = currentSync.toISOString();
+    saveConfig(config);
 }
 
 await initialize();
