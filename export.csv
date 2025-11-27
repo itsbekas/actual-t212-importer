@@ -1,0 +1,10 @@
+Action,Time,ISIN,Ticker,Name,Notes,ID,No. of shares,Price / share,Currency (Price / share),Exchange rate,Currency (Result),Total,Currency (Total),Merchant name,Merchant category
+Interest on cash,2025-11-25 02:06:31,,,,"Interest on cash",63fca2f5-d274-4e1b-9cdb-4651d92895de,,,,,,0.09,"EUR",,
+Market buy,2025-11-25 08:18:14,IE00BK5BQT80,VWCE,"Vanguard FTSE All-World (Acc)",,EOF42362670303,1.3530855500,142.6000000000,EUR,1.00000000,"EUR",192.95,"EUR",,
+Market buy,2025-11-25 08:18:15,IE0006WW1TQ4,EXUS,"Xtrackers MSCI World ex USA (Acc)",,EOF42362670349,5.7255192800,33.7000000000,EUR,1.00000000,"EUR",192.95,"EUR",,
+Deposit,2025-11-25 15:30:38,,,,"Bank Transfer",d13598d9-c269-4668-9aca-b8a6a92d7733,,,,,,1500.00,"EUR",,
+Card debit,2025-11-25 15:41:18,,,,,cfa48a66-a245-4a81-ab26-bf1571a519a8,,,,,,-25.00,"EUR","WWW.AMAZON.ES","RETAIL_STORES"
+Interest on cash,2025-11-26 07:40:39,,,,"Interest on cash",746754e6-1d51-4cf1-9fae-0cb620986097,,,,,,0.15,"EUR",,
+Card debit,2025-11-26 10:46:10,,,,,65c2ba87-927e-44f6-b809-3721010a3b6d,,,,,,-1.40,"EUR","OCAFE","RESTAURANTS"
+Card debit,2025-11-26 13:42:51,,,,,98568b66-4e8d-42e6-b62e-d48284e8b981,,,,,,-13.00,"EUR","O FAINE","RESTAURANTS"
+Interest on cash,2025-11-27 02:06:25,,,,"Interest on cash",1f571ec2-98d0-47e2-b06d-8c4bb9b8409c,,,,,,0.16,"EUR",,

@@ -1,5 +1,5 @@
 import actualClient from '@actual-app/api';
-import { getConfig } from './config.js';
+import { getConfig, saveConfig } from './config.js';
 import { Trading212Client } from './t212.js';
 import axios from 'axios';
 import { parse } from 'csv-parse/sync';
@@ -16,7 +16,13 @@ function getFromDate(lastSync) {
 }
 
 async function getCSVData(t212Client, fromDate, toDate) {
-    const reportId = (await t212Client.exportCSV(fromDate, toDate)).reportId;
+    const report = await t212Client.exportCSV(fromDate, toDate);
+    if (report === null) {
+        // abort the import
+        console.error("Error exporting CSV. Aborting import.");
+        process.exit(1);
+    }
+    const reportId = report.reportId;
     console.log(`Export report created with ID: ${reportId}`);
 
     // Wait for the report to be generated
@@ -98,10 +104,14 @@ function parseCSVData(csvData, accountId) {
                 // do nothing
                 break;
         }
+
+        const payee_name = imported_payee;
+
         transactions.push({
             account,
             date,
             amount,
+            payee_name,
             imported_payee,
             category,
             notes,
@@ -180,7 +190,9 @@ async function initialize() {
     } else {
         // Subsequent syncs: download since last sync
         const fromDate = getFromDate(config.lastSync);
-        const csv_data = await getCSVData(t212Client, fromDate);
+        const toDate = currentSync.toDate();
+        console.log(`Downloading transactions from ${fromDate} to ${toDate}...`);
+        const csv_data = await getCSVData(t212Client, fromDate.toISOString(), toDate.toISOString());
         transactions = parseCSVData(csv_data, config.accountId);
     }
     
