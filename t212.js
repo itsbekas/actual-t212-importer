@@ -25,7 +25,9 @@ export class Trading212Client {
                     return this.t212Client.get('/history/exports')
                         .then(response => response.data);
                 } else {
-                    throw error;
+                    console.error("Error getting exports:", error.message);
+                    console.log(error.toJSON());
+                    return [];
                 }
             });
     }
@@ -62,7 +64,10 @@ export class Trading212Client {
                     return this.t212Client.post('/history/exports', params, { headers: { 'Content-Type': 'application/json' } })
                         .then(response => response.data);
                 } else {
-                    throw error;
+                    // this error is too noisy since it prints the whole axios response
+                    console.error("Error exporting CSV:", error.message);
+                    console.log(error.toJSON().data);
+                    return null;
                 }
             });
     }

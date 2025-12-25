@@ -35,7 +35,7 @@ function configExists() {
     return fs.existsSync('config.json');
 }
 
-function saveConfig(config) {
+export function saveConfig(config) {
     try {
         const data = JSON.stringify(config, null, 2);
         fs.writeFileSync('config.json', data, 'utf8');
