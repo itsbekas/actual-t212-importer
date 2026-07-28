@@ -55,10 +55,23 @@ function parseCSVData(csvData, accountId) {
     }
     console.log("Parsing CSV data for account:", accountId);
     let transactions = [];
+    let skipped = 0;
     csvData.forEach(row => {
         const account = accountId;
-        const date = new Date(row['Time']);
-        let amount = actualClient.utils.amountToInteger(Number(row['Total']));
+
+        // Actual stores dates as YYYY-MM-DD strings; handing it a Date object
+        // or an unparseable value ends up as a literal "NaNNaNNaN" in the SQL
+        // it generates, which fails deep inside reconciliation.
+        const parsedDate = dayjs(row['Time']);
+        const total = Number(row['Total']);
+        if (!parsedDate.isValid() || !Number.isFinite(total)) {
+            console.warn(`Skipping row ${row['ID'] || '<no id>'}: unusable Time "${row['Time']}" or Total "${row['Total']}".`);
+            skipped++;
+            return;
+        }
+
+        const date = parsedDate.format('YYYY-MM-DD');
+        let amount = actualClient.utils.amountToInteger(total);
         let imported_payee = null;
         let category = row['Merchant category'] || null;
         let notes = null;
@@ -118,7 +131,14 @@ function parseCSVData(csvData, accountId) {
             cleared
         });
     });
-    console.log("CSV data parsed successfully.");
+
+    // Skipping the odd malformed row is fine; skipping all of them means the
+    // export format changed under us, which must not look like a clean run.
+    if (transactions.length === 0 && skipped > 0) {
+        throw new Error(`All ${skipped} rows were unusable -- the export format has probably changed.`);
+    }
+
+    console.log(`CSV data parsed successfully (${transactions.length} usable rows, ${skipped} skipped).`);
     return transactions;
 }
 
