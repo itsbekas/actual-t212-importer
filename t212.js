@@ -2,10 +2,13 @@ import axios from "axios";
 
 export class Trading212Client {
     constructor(token) {
+        // API keys are "<keyId>:<keySecret>" pairs presented as HTTP Basic
+        // credentials. Passing the key straight in the Authorization header
+        // was the older scheme and now returns 401 with an empty body.
         this.t212Client = axios.create({
             baseURL: "https://live.trading212.com/api/v0",
             headers: {
-                'Authorization': token
+                'Authorization': `Basic ${Buffer.from(token).toString('base64')}`
             }
         });
     }
