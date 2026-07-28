@@ -5,10 +5,17 @@ import { Trading212Client } from './t212.js';
 import axios from 'axios';
 import { parse } from 'csv-parse/sync';
 import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc.js';
 import fs from 'fs';
+
+dayjs.extend(utc);
 
 // History is walked backwards in chunks of this size.
 const CHUNK_DAYS = 360;
+// The export schema has changed over time -- the timestamp column has been
+// called both of these -- so resolve it per export rather than assuming one.
+// Order matters: the first column present wins.
+const DATE_COLUMNS = ['Time (UTC)', 'Time'];
 // The export is generated asynchronously; give up eventually rather than
 // spinning forever if Trading212 never produces a download link.
 const MAX_DOWNLOAD_LINK_ATTEMPTS = 20;
@@ -49,23 +56,47 @@ async function getCSVData(t212Client, fromDate, toDate) {
     });
 }
 
+// Trading212 includes columns conditionally: merchant columns only appear when
+// the window contains card activity, tax/result columns only when it contains
+// sells or dividends. Only the timestamp is load-bearing, so fail loudly --
+// naming the columns we did get -- rather than importing a garbage date.
+function resolveDateColumn(row) {
+    const column = DATE_COLUMNS.find(candidate => candidate in row);
+    if (!column) {
+        throw new Error(
+            `No known date column in export. Expected one of ${DATE_COLUMNS.join(', ')}; ` +
+            `got: ${Object.keys(row).join(', ')}`
+        );
+    }
+    return column;
+}
+
 function parseCSVData(csvData, accountId) {
     if (!accountId) {
         throw new Error("accountId is required for parsing CSV data");
     }
-    console.log("Parsing CSV data for account:", accountId);
+    if (csvData.length === 0) {
+        return [];
+    }
+
+    const dateColumn = resolveDateColumn(csvData[0]);
+    console.log(`Parsing CSV data for account: ${accountId} (date column: "${dateColumn}")`);
+
     let transactions = [];
     let skipped = 0;
     csvData.forEach(row => {
         const account = accountId;
 
-        // Actual stores dates as YYYY-MM-DD strings; handing it a Date object
-        // or an unparseable value ends up as a literal "NaNNaNNaN" in the SQL
-        // it generates, which fails deep inside reconciliation.
-        const parsedDate = dayjs(row['Time']);
+        // Parsed as UTC because the column is explicitly UTC -- going through
+        // local time could shift a late-evening transaction to the wrong day.
+        // The emptiness check is not redundant: dayjs(undefined) is *now* and
+        // reports itself valid, so a renamed column would otherwise import
+        // every transaction dated today.
+        const rawDate = row[dateColumn];
+        const parsedDate = dayjs.utc(rawDate);
         const total = Number(row['Total']);
-        if (!parsedDate.isValid() || !Number.isFinite(total)) {
-            console.warn(`Skipping row ${row['ID'] || '<no id>'}: unusable Time "${row['Time']}" or Total "${row['Total']}".`);
+        if (!rawDate || !parsedDate.isValid() || !Number.isFinite(total)) {
+            console.warn(`Skipping row ${row['ID'] || '<no id>'}: unusable date "${rawDate}" or Total "${row['Total']}".`);
             skipped++;
             return;
         }
@@ -83,13 +114,14 @@ function parseCSVData(csvData, accountId) {
                 notes = `${row['Action']} (${row['Notes']})`;
                 break;
             case "Card debit":
-                notes = row['Notes'] ? `${row['Merchant name']} (${row['Notes']})` : row['Merchant name'];
-                imported_payee = row['Merchant name'];
+            case "Card credit": {
+                // Merchant columns ship only with card activity; fall back so
+                // notes can never read "undefined (...)".
+                const merchant = row['Merchant name'] || row['Name'] || row['Action'];
+                notes = row['Notes'] ? `${merchant} (${row['Notes']})` : merchant;
+                imported_payee = row['Merchant name'] || null;
                 break;
-            case "Card credit":
-                notes = row['Notes'] ? `${row['Merchant name']} (${row['Notes']})` : row['Merchant name'];
-                imported_payee = row['Merchant name'];
-                break;
+            }
             case "Spending cashback":
                 notes = row['Action'];
                 break;
