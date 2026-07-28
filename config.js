@@ -8,7 +8,7 @@ async function tokenIsValid(token) {
         console.error("Trading212 API token cannot be empty.");
         return false;
     }
-    
+
     const t212Client = new Trading212Client(token);
     try {
         await t212Client.getAccountMetadata();
@@ -24,7 +24,8 @@ function loadConfig() {
     const data = fs.readFileSync('config.json', 'utf8');
     const config = JSON.parse(data);
 
-    if (!config.dataDir || !config.serverURL || !config.password || !config.token) {
+    if (!config.dataDir || !config.serverURL || !config.password || !config.token ||
+        !config.budgetId || !config.accountId) {
         throw new Error("Invalid configuration file. Please ensure all fields are present or delete the config file to reinitialize.");
     }
 
@@ -35,7 +36,7 @@ function configExists() {
     return fs.existsSync('config.json');
 }
 
-export function saveConfig(config) {
+function saveConfig(config) {
     try {
         const data = JSON.stringify(config, null, 2);
         fs.writeFileSync('config.json', data, 'utf8');
@@ -69,7 +70,7 @@ async function promptConfig() {
     }
     config.serverURL = await ask('Enter server URL: ');
     config.password = await ask('Enter password: ');
-    config.budgetID = await ask('Enter budget ID: ');
+    config.budgetId = await ask('Enter budget ID: ');
 
     await actualClient.init({
         dataDir: config.dataDir,
@@ -77,7 +78,7 @@ async function promptConfig() {
         password: config.password
     });
 
-    await actualClient.downloadBudget(config.budgetID);
+    await actualClient.downloadBudget(config.budgetId);
 
     const accounts = await actualClient.getAccounts();
 
@@ -108,6 +109,28 @@ async function promptConfig() {
 }
 
 export async function getConfig() {
+    // Check environment variables first
+    if (process.env.ACTUAL_SERVER_URL &&
+        process.env.ACTUAL_PASSWORD &&
+        process.env.ACTUAL_BUDGET_ID &&
+        process.env.T212_TOKEN &&
+        process.env.ACTUAL_ACCOUNT_ID) {
+
+        console.log("Using configuration from environment variables.");
+
+        // Sync progress is deliberately not part of the config -- it is kept
+        // in the data directory by state.js, so nothing writes credentials
+        // back out to the mounted volume.
+        return {
+            serverURL: process.env.ACTUAL_SERVER_URL,
+            password: process.env.ACTUAL_PASSWORD,
+            budgetId: process.env.ACTUAL_BUDGET_ID,
+            token: process.env.T212_TOKEN,
+            accountId: process.env.ACTUAL_ACCOUNT_ID,
+            dataDir: process.env.DATA_DIR || './data'
+        };
+    }
+
     return configExists() ? loadConfig() : await promptConfig();
 }
 

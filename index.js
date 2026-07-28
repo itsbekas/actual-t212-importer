@@ -1,26 +1,23 @@
 import actualClient from '@actual-app/api';
-import { getConfig, saveConfig } from './config.js';
+import { getConfig } from './config.js';
+import { loadState, saveState } from './state.js';
 import { Trading212Client } from './t212.js';
 import axios from 'axios';
 import { parse } from 'csv-parse/sync';
 import dayjs from 'dayjs';
 import fs from 'fs';
 
-function getFromDate(lastSync) {
-    if (lastSync === null) {
-        // First sync: get last 360 days of history
-        return dayjs().subtract(360, 'day').toDate();
-    }
-    // Subsequent syncs: start from last sync date
-    return new Date(lastSync);
-}
+// History is walked backwards in chunks of this size.
+const CHUNK_DAYS = 360;
+// The export is generated asynchronously; give up eventually rather than
+// spinning forever if Trading212 never produces a download link.
+const MAX_DOWNLOAD_LINK_ATTEMPTS = 20;
+const DOWNLOAD_LINK_RETRY_MS = 60000;
 
 async function getCSVData(t212Client, fromDate, toDate) {
     const report = await t212Client.exportCSV(fromDate, toDate);
     if (report === null) {
-        // abort the import
-        console.error("Error exporting CSV. Aborting import.");
-        process.exit(1);
+        throw new Error(`Trading212 refused the export request for ${fromDate} -> ${toDate}.`);
     }
     const reportId = report.reportId;
     console.log(`Export report created with ID: ${reportId}`);
@@ -30,24 +27,26 @@ async function getCSVData(t212Client, fromDate, toDate) {
     await new Promise(resolve => setTimeout(resolve, 10000));
 
     let exportData = null;
-    while (!exportData || !exportData.downloadLink) {
+    for (let attempt = 1; !exportData || !exportData.downloadLink; attempt++) {
         const exportList = await t212Client.getExports();
         exportData = exportList.find(e => e.reportId === Number(reportId));
-        
+
         if (!exportData || !exportData.downloadLink) {
-            console.warn("No download link found for the export. Retrying in 60 seconds...");
-            await new Promise(resolve => setTimeout(resolve, 60000));
+            if (attempt >= MAX_DOWNLOAD_LINK_ATTEMPTS) {
+                throw new Error(`Export ${reportId} had no download link after ${attempt} attempts.`);
+            }
+            console.warn(`No download link found for the export. Retrying in 60 seconds (${attempt}/${MAX_DOWNLOAD_LINK_ATTEMPTS})...`);
+            await new Promise(resolve => setTimeout(resolve, DOWNLOAD_LINK_RETRY_MS));
         }
     }
 
     console.log("Downloading export data...");
     const response = await axios.get(exportData.downloadLink);
+    console.log("Export data downloaded successfully.");
 
-    const results = parse(response.data, {
+    return parse(response.data, {
         columns: true,
     });
-    console.log("Export data downloaded successfully.");
-    return results;
 }
 
 function parseCSVData(csvData, accountId) {
@@ -123,86 +122,143 @@ function parseCSVData(csvData, accountId) {
     return transactions;
 }
 
-async function getFullHistory(t212Client, config) {
-    const allTransactions = [];
-    let toDate = dayjs();
-    let fromDate = toDate.subtract(360, 'day');
-    
+async function importChunk(csvData, config) {
+    const transactions = parseCSVData(csvData, config.accountId);
+    console.log(`Ready to import ${transactions.length} transactions for account: ${config.accountId}`);
+
+    // Actual reconciles on imported_id, so re-importing a range that was
+    // already synced is a no-op rather than a duplicate.
+    const result = await actualClient.importTransactions(config.accountId, transactions);
+    console.log(`Imported ${result.added.length} new and updated ${result.updated.length} existing transactions.`);
+    for (const error of result.errors ?? []) {
+        console.warn("Import warning:", error.message);
+    }
+
+    return result.added.length;
+}
+
+// Walks history backwards in CHUNK_DAYS steps until an export comes back
+// empty. Each chunk is imported and checkpointed as it goes, so an interrupted
+// backfill resumes from where it stopped rather than re-requesting every chunk
+// from the rate-limited export API.
+async function runBackfill(t212Client, config, state) {
+    if (!state.backfillCursor) {
+        state.backfillStart = dayjs().toISOString();
+        state.backfillCursor = state.backfillStart;
+        saveState(config.dataDir, state);
+    }
+
+    let toDate = dayjs(state.backfillCursor);
+    let total = 0;
+
     while (true) {
-        const fromDateISO = fromDate.toISOString()
-        const toDateISO = toDate.toISOString()
-        console.log(`Fetching transactions from ${fromDateISO}...`);
+        const fromDate = toDate.subtract(CHUNK_DAYS, 'day');
+        const fromDateISO = fromDate.toISOString();
+        const toDateISO = toDate.toISOString();
+        console.log(`Fetching transactions from ${fromDateISO} to ${toDateISO}...`);
         const csvData = await getCSVData(t212Client, fromDateISO, toDateISO);
-        
+
         if (csvData.length === 0) {
             // Empty report means we've reached the end of history
             console.log("Reached the end of transaction history.");
+            state.backfillComplete = true;
+            saveState(config.dataDir, state);
             break;
         }
-        
-        // Process this batch
-        const transactions = parseCSVData(csvData, config.accountId);
-        allTransactions.push(...transactions);
-        console.log(`Downloaded ${transactions.length} transactions.`);
-        
-        // Move to next 360-day chunk (backwards in time)
+
+        total += await importChunk(csvData, config);
+
+        // Push the chunk to the server before checkpointing, so the cursor
+        // never claims progress that only exists locally. If this throws the
+        // run fails and the next one retries this same chunk.
+        await actualClient.sync();
+
+        state.backfillCursor = fromDateISO;
+        saveState(config.dataDir, state);
+
+        // Move to next chunk (backwards in time)
         toDate = fromDate;
-        fromDate = fromDate.subtract(360, 'day');
     }
-    
-    return allTransactions;
+
+    return total;
 }
 
-async function initialize() {
-    const config = await getConfig();
+async function runSync() {
+    console.log(`Sync started at: ${new Date().toISOString()}`);
+    try {
+        const config = await getConfig();
 
-    if (!config) {
-        console.error("Configuration is not available. Please run the setup.");
-        return;
+        if (!config) {
+            console.error("Configuration is not available. Please run the setup.");
+            return;
+        }
+
+        const t212Client = new Trading212Client(config.token);
+
+        // Validate required config fields
+        if (!config.accountId) {
+            throw new Error("Configuration is missing accountId. Please re-run the setup.");
+        }
+
+        // Create data directory if it doesn't exist
+        if (!fs.existsSync(config.dataDir)) {
+            fs.mkdirSync(config.dataDir, { recursive: true });
+            console.log(`Data directory created at: ${config.dataDir}`);
+        }
+
+        await actualClient.init({
+            dataDir: config.dataDir,
+            serverURL: config.serverURL,
+            password: config.password
+        });
+
+        await actualClient.downloadBudget(config.budgetId);
+
+        const state = loadState(config.dataDir);
+        const currentSync = dayjs();
+
+        if (!state.backfillComplete) {
+            // First sync (or a previous one that was interrupted): walk the
+            // full history backwards before switching to incremental syncs.
+            const resuming = state.backfillCursor !== null;
+            console.log(resuming
+                ? `Resuming backfill from ${state.backfillCursor}...`
+                : "No previous sync found, backfilling full history...");
+            const imported = await runBackfill(t212Client, config, state);
+            console.log(`Backfill added ${imported} transactions.`);
+
+            // A backfill can span several runs, so resume incremental syncing
+            // from when it started rather than from now -- otherwise anything
+            // that happened while it was running would be skipped.
+            state.lastSync = state.backfillStart;
+        } else {
+            // Subsequent syncs: download since the last successful sync only.
+            const fromDate = dayjs(state.lastSync);
+            console.log(`Downloading transactions from ${fromDate.toISOString()} to ${currentSync.toISOString()}...`);
+            const csvData = await getCSVData(t212Client, fromDate.toISOString(), currentSync.toISOString());
+            await importChunk(csvData, config);
+            state.lastSync = currentSync.toISOString();
+        }
+
+        // Only advanced once everything above succeeded; a failed run leaves
+        // lastSync untouched so the next one re-covers the same window.
+        saveState(config.dataDir, state);
+
+        console.log(`Sync completed successfully at: ${new Date().toISOString()}`);
+        return true;
+    } catch (error) {
+        console.error("Error during sync:", error);
+        return false;
+    } finally {
+        // Always close the local budget cleanly, otherwise a failed run can
+        // leave the cache in the data volume locked for the next one.
+        try {
+            await actualClient.shutdown();
+        } catch {
+            // Nothing was open -- init() itself may have been what failed.
+        }
     }
-
-    const t212Client = new Trading212Client(config.token);
-
-    // Validate required config fields
-    if (!config.accountId) {
-        throw new Error("Configuration is missing accountId. Please re-run the setup.");
-    }
-
-    // Create data directory if it doesn't exist
-    if (!fs.existsSync(config.dataDir)) {
-        fs.mkdirSync(config.dataDir);
-        console.log(`Data directory created at: ${config.dataDir}`);
-    }
-
-    await actualClient.init({
-        dataDir: config.dataDir,
-        serverURL: config.serverURL,
-        password: config.password
-    });
-
-    await actualClient.downloadBudget(config.budgetId);
-
-    const currentSync = dayjs();
-    let transactions;
-    if (config.lastSync === null) {
-        // First sync: download full history in 360-day chunks
-        transactions = await getFullHistory(t212Client, config);
-    } else {
-        // Subsequent syncs: download since last sync
-        const fromDate = getFromDate(config.lastSync);
-        const toDate = currentSync.toDate();
-        console.log(`Downloading transactions from ${fromDate} to ${toDate}...`);
-        const csv_data = await getCSVData(t212Client, fromDate.toISOString(), toDate.toISOString());
-        transactions = parseCSVData(csv_data, config.accountId);
-    }
-    
-    console.log(`Ready to import ${transactions.length} transactions for account: ${config.accountId}`);
-    await actualClient.importTransactions(config.accountId, transactions);
-    console.log("Transactions imported successfully.");
-
-    // Update lastSync timestamp in config
-    config.lastSync = currentSync.toISOString();
-    saveConfig(config);
 }
 
-await initialize();
+const ok = await runSync();
+process.exit(ok ? 0 : 1);
