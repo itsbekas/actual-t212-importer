@@ -19,7 +19,7 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
-    "@actual-app/api": "^25.10.0",
+    "@actual-app/api": "^26.7.0",
     "axios": "^1.10.0",
     "csv-parse": "^6.0.0",
     "dayjs": "^1.11.18"
