@@ -1,0 +1,16 @@
+services:
+  actual-t212-importer:
+    build: .
+    container_name: actual-t212-importer
+    # Runs once and exits; schedule it externally (cron, systemd timer, etc.)
+    # with `docker compose run --rm actual-t212-importer`.
+    restart: "no"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - ACTUAL_SERVER_URL=https://your-actual-server.com
+      - ACTUAL_PASSWORD=your-password
+      - ACTUAL_BUDGET_ID=your-budget-id
+      - ACTUAL_ACCOUNT_ID=your-account-id
+      - T212_TOKEN=your-t212-token
+      - DATA_DIR=/app/data

@@ -1,0 +1,15 @@
+# Keep the build context clean: `COPY . .` runs after `npm install`, so a
+# local node_modules would otherwise overwrite the installed one, and a local
+# config.json would bake credentials into a published image.
+node_modules
+npm-debug.log*
+config.json
+export.csv
+data
+.git
+.github
+.gitignore
+Dockerfile
+.dockerignore
+docker-compose.yml
+*.md
